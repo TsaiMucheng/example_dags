@@ -1,0 +1,6 @@
+apache-airflow-providers-microsoft-mssql==2.1.0
+apache-airflow-providers-mongo==2.3.0
+openpyxl==3.0.10
+xlrd==2.0.1
+cron-descriptor==1.2.32
+virtualenv==20.17.1

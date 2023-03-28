@@ -1,0 +1,61 @@
+FROM apache/airflow:2.2.4
+USER root
+ARG USER_HOME=/home/airflow
+ENV TZ=Asia/Taipei
+ENV LANG=zh_TW.UTF-8
+ENV LANGUAGE=zh_TW.UTF-8
+
+RUN sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' \
+  && apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys  78BD65473CB3BD13
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev \
+  && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+  && apt-get install -y --no-install-recommends iputils-ping telnet nano git zip google-chrome-stable \
+  && apt-get autoremove -yqq --purge \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+# insatll chromedriver
+# RUN wget -O /tmp/chromedriver.zip http://chromedriver.storage.googleapis.com/`curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE`/chromedriver_linux64.zip \
+#   && unzip /tmp/chromedriver.zip chromedriver -d /usr/bin/ \
+#   && rm /tmp/chromedriver.zip
+
+# install miniconda
+# RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh \
+#   && /bin/bash ~/miniconda.sh -b -p /opt/conda
+# ENV PATH=/opt/conda/bin:$PATH
+
+USER airflow
+WORKDIR ${AIRFLOW_HOME}
+COPY ./env/extension.txt ./env/crawl.txt ./
+RUN git clone https://github.com/pyenv/pyenv.git ~/.pyenv
+ENV PYENV_ROOT="$USER_HOME/.pyenv"
+RUN echo $USER_HOME && echo $AIRFLOW_HOME && echo $PYENV_ROOT
+ENV PATH="$PYENV_ROOT/bin:$PATH"
+RUN source ~/.bashrc
+
+# View ARG
+# RUN cat pyenv.txt
+# RUN ls $PYENV_ROOT/bin | grep pyenv
+
+# Install python
+RUN pyenv install 3.6.5
+RUN pyenv rehash
+# RUN echo 'eval "$(pyenv init -)" && eval "$(pyenv virtualenv-init -)"' >> ~/.bashrc
+
+RUN pip install --no-cache-dir -r extension.txt
+
+# Create virtualenv env
+# RUN pip install --no-cache-dir virtualenv=20.17.1
+RUN pyenv shell 3.6.5 && \
+    virtualenv -p python ./crawl && \
+    virtualenv --system-site-packages crawl
+RUN ./crawl/bin/pip install --no-cache-dir -r crawl.txt
+
+# Solve mongo hook signing in the original string were escaped unless they were included in safe
+USER root
+COPY ./env/mongo.py ${USER_HOME}/.local/lib/python3.7/site-packages/airflow/providers/mongo/hooks/
+# RUN chown -R airflow: ${AIRFLOW_HOME}/crawl
+
+USER airflow

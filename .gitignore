@@ -1,0 +1,5 @@
+plugins/__pycache__/*
+dags/__pycache__/*
+dags/*.py
+dags/*.md
+logs/*

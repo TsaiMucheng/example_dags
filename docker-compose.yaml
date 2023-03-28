@@ -1,0 +1,153 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+
+# Basic Airflow cluster configuration for CeleryExecutor with Redis and PostgreSQL.
+#
+# WARNING: This configuration is for local development. Do not use it in a production deployment.
+#
+# This configuration supports basic configuration using environment variables or an .env file
+# The following variables are supported:
+#
+# AIRFLOW_IMAGE_NAME         - Docker image name used to run Airflow.
+#                              Default: apache/airflow:master-python3.8
+# AIRFLOW_UID                - User ID in Airflow containers
+#                              Default: 50000
+# AIRFLOW_GID                - Group ID in Airflow containers
+#                              Default: 50000
+# _AIRFLOW_WWW_USER_USERNAME - Username for the administrator account.
+#                              Default: airflow
+# _AIRFLOW_WWW_USER_PASSWORD - Password for the administrator account.
+#                              Default: airflow
+#
+# Feel free to modify this file to suit your needs.
+---
+version: '3'
+x-airflow-common:
+    &airflow-common
+    build:
+        context: ./
+        dockerfile: Dockerfile
+    image: ${AIRFLOW_IMAGE_NAME:-extending_airflow:latest}
+    environment:
+        &airflow-common-env
+        AIRFLOW__WEBSERVER__BASE_URL: ${AIRFLOW__WEBSERVER__BASE_URL}:8098
+        AIRFLOW__WEBSERVER__ENDPOINT_URL: ${AIRFLOW__WEBSERVER__BASE_URL}:8098
+        AIRFLOW__CLI__ENDPOINT_URL: ${AIRFLOW__WEBSERVER__BASE_URL}:8098
+        AIRFLOW__CORE__EXECUTOR: LocalExecutor
+        AIRFLOW__CORE__DAGS_FOLDER: $AIRFLOW_HOME/dags
+        AIRFLOW__CORE__SQL_ALCHEMY_CONN: mysql+mysqldb://airflow_user:abc7890@airflow_mysql:3306/airflow
+        AIRFLOW__CORE__FERNET_KEY: ''
+        AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+        AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+        AIRFLOW__LOG_RETENTION_DAYS: 90
+        NVIDIA_VISIBLE_DEVICES: all
+        # pip means conda-pip, but not pip on airflow
+        # _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- apache-airflow-providers-microsoft-mssql}
+    hostname: airflow_service
+    volumes:
+        # - /mnt/sharedata:/mnt/sharedata
+        - ./dags:$AIRFLOW_HOME/dags
+        - ./logs:$AIRFLOW_HOME/logs
+        - ./plugins:$AIRFLOW_HOME/plugins
+        - ./.vscode/launch.json:$AIRFLOW_HOME/.vscode/launch.json
+        - ./example_dags/.vscode/launch.json:$AIRFLOW_HOME/.local/lib/python3.7/site-packages/airflow/example_dags/.vscode/launch.json
+    user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-50000}"
+    depends_on:
+        airflow_mysql:
+            condition: service_healthy
+
+services:
+    airflow_mysql:
+        container_name: airflow_mysql
+        image: mysql:8.0.23
+        cap_add:
+            - SYS_NICE
+        environment:
+            MYSQL_ROOT_PASSWORD: testadmin
+            MYSQL_USER: airflow_user
+            MYSQL_PASSWORD: abc7890
+            MYSQL_DATABASE: airflow
+        hostname: airflow_mysql
+        domainname: airflow_mysql
+        volumes:
+            - ./db_cfg:/etc/my.cnf
+            - myairflow-mysql-volume:/var/lib/mysq
+        ports:
+            - 3320:3306
+        healthcheck:
+            test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+            interval: 5s
+            retries: 5
+        restart: always
+    
+    airflow-webserver:
+        <<: *airflow-common
+        container_name: airflow_web
+        domainname: airflow_web
+        # command: webserver
+        command: bash -c "sleep 40 && ./dags/functions/addconn.sh && sleep 3 && airflow webserver"
+        environment:
+            <<: *airflow-common-env
+            AIRFLOW__WEBSERVER__RBAC: 'true'
+            AIRFLOW__API__AUTH_BACKEND: airflow.api.auth.backend.basic_auth
+            AIRFLOW__API__CORS_ENABLED: 'true'
+        ports:
+            - 8098:8080
+        healthcheck:
+            test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+            interval: 10s
+            timeout: 10s
+            retries: 5
+        restart: always
+    
+    airflow-scheduler:
+        <<: *airflow-common
+        container_name: airflow_scheduler
+        domainname: airflow_scheduler
+        # command: scheduler
+        command: bash -c "sleep 40 && airflow scheduler"
+        environment:
+            <<: *airflow-common-env
+            AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 10
+        restart: always
+    
+    airflow-init:
+        <<: *airflow-common
+        container_name: airflow_initconfig
+        domainname: airflow_initconfig
+        command: >
+            bash -c "airflow version"
+        environment:
+            <<: *airflow-common-env
+            _AIRFLOW_DB_UPGRADE: 'true'
+            _AIRFLOW_WWW_USER_CREATE: 'true'
+            _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-admin}
+            _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-123456}
+
+networks:
+    default:
+        driver: bridge
+        ipam:
+            config:
+                - subnet: "172.30.0.0/24"
+                  gateway: "172.30.0.254"
+        driver_opts:
+            com.docker.network.bridge.name: br-myairflow
+        
+volumes:
+    myairflow-mysql-volume:

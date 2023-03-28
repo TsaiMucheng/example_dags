@@ -1,0 +1,5 @@
+.git
+logs
+dags
+plugins
+db_cfg
